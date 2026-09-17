@@ -161,9 +161,10 @@ else
   exit 1
 fi
 
-# Generate and verify kernel.release before spending time on the full build.
-make -s O=out "${MAKE_ARGS[@]}" kernelrelease >/dev/null
-ACTUAL_RELEASE="$(cat out/include/config/kernel.release)"
+# Verify kernel.release before spending time on the full build. The kernelrelease
+# target prints the release to stdout but does not guarantee that
+# out/include/config/kernel.release already exists at this stage.
+ACTUAL_RELEASE="$(make -s O=out "${MAKE_ARGS[@]}" kernelrelease | tail -n 1)"
 echo "==> Expected kernel.release: $EXPECTED_RELEASE"
 echo "==> Actual   kernel.release: $ACTUAL_RELEASE"
 if [[ "$ACTUAL_RELEASE" != "$EXPECTED_RELEASE" ]]; then
@@ -179,8 +180,9 @@ COMPILE_H="$OUT_DIR/include/generated/compile.h"
 test -s "$IMAGE"
 test -f "$COMPILE_H"
 
-# Re-check after the full build so a wrong-identity image can never be packed.
-ACTUAL_RELEASE="$(cat "$OUT_DIR/include/config/kernel.release")"
+# Re-check after the full build using the same kernelrelease target, rather
+# than depending on the location/timing of an intermediate generated file.
+ACTUAL_RELEASE="$(make -s O=out "${MAKE_ARGS[@]}" kernelrelease | tail -n 1)"
 if [[ "$ACTUAL_RELEASE" != "$EXPECTED_RELEASE" ]]; then
   echo "::error::Final kernel release mismatch: $ACTUAL_RELEASE"
   exit 1
