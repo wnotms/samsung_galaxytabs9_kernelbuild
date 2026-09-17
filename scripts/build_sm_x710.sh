@@ -161,9 +161,27 @@ else
   exit 1
 fi
 
+# olddefconfig updates out/.config, but Samsung's scripts/setlocalversion reads
+# CONFIG_LOCALVERSION from include/config/auto.conf. Generate/synchronise the
+# derived Kconfig files before asking for kernelrelease; otherwise the release
+# silently loses the -2370170 stock suffix.
+echo "==> Sync generated Kconfig state"
+make -j"$JOBS" O=out "${MAKE_ARGS[@]}" prepare
+
+AUTO_CONF="$OUT_DIR/include/config/auto.conf"
+test -f "$AUTO_CONF"
+if ! grep -q '^CONFIG_LOCALVERSION="-2370170"$' "$AUTO_CONF"; then
+  echo "::error::Generated auto.conf does not contain the stock CONFIG_LOCALVERSION"
+  grep '^CONFIG_LOCALVERSION' "$AUTO_CONF" || true
+  exit 1
+fi
+if grep -q '^CONFIG_LOCALVERSION_AUTO=y$' "$AUTO_CONF"; then
+  echo "::error::Generated auto.conf unexpectedly enables CONFIG_LOCALVERSION_AUTO"
+  exit 1
+fi
+
 # Verify kernel.release before spending time on the full build. The kernelrelease
-# target prints the release to stdout but does not guarantee that
-# out/include/config/kernel.release already exists at this stage.
+# target prints the release to stdout.
 ACTUAL_RELEASE="$(make -s O=out "${MAKE_ARGS[@]}" kernelrelease | tail -n 1)"
 echo "==> Expected kernel.release: $EXPECTED_RELEASE"
 echo "==> Actual   kernel.release: $ACTUAL_RELEASE"
@@ -180,8 +198,7 @@ COMPILE_H="$OUT_DIR/include/generated/compile.h"
 test -s "$IMAGE"
 test -f "$COMPILE_H"
 
-# Re-check after the full build using the same kernelrelease target, rather
-# than depending on the location/timing of an intermediate generated file.
+# Re-check after the full build using the same kernelrelease target.
 ACTUAL_RELEASE="$(make -s O=out "${MAKE_ARGS[@]}" kernelrelease | tail -n 1)"
 if [[ "$ACTUAL_RELEASE" != "$EXPECTED_RELEASE" ]]; then
   echo "::error::Final kernel release mismatch: $ACTUAL_RELEASE"
