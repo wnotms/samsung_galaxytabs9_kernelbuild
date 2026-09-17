@@ -1,40 +1,132 @@
-name: build kernel
-on: workflow_dispatch
-jobs: 
-  build: 
-    name: build kernel
+name: Build Galaxy Tab S9 SM-X710 Kernel
+
+on:
+  workflow_dispatch:
+    inputs:
+      lto:
+        description: "LTO 模式"
+        required: true
+        type: choice
+        options:
+          - thin
+          - full
+        default: thin
+      jobs:
+        description: "并行编译线程数（GitHub Runner 建议 2）"
+        required: true
+        type: choice
+        options:
+          - '2'
+          - '3'
+          - '4'
+        default: '2'
+      build_number:
+        description: "Samsung firmware build number"
+        required: true
+        type: string
+        default: "X710ZCU5CYH4"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: SM-X710 / Android 13 / Linux 5.15
     runs-on: ubuntu-latest
-    steps: 
-      - name: "最大化构建空间"
+    timeout-minutes: 180
+
+    env:
+      TARGET_DEFCONFIG: kalama_gki_defconfig
+      LTO: ${{ inputs.lto }}
+      JOBS: ${{ inputs.jobs }}
+      BUILD_NUMBER: ${{ inputs.build_number }}
+      KBUILD_BUILD_TIMESTAMP: "2025-08-20 08:06:12 UTC"
+
+    steps:
+      - name: "🚀 Maximize Build Space | 最大化构建空间"
         uses: easimon/maximize-build-space@master
-        with: 
+        with:
           root-reserve-mb: 8192
           temp-reserve-mb: 4096
-          swap-size-mb: 20480
+          swap-size-mb: 12288
           remove-dotnet: 'true'
           remove-android: 'true'
           remove-haskell: 'true'
           remove-codeql: 'true'
-      - name: "配置git账户"
+
+      - name: "📥 Checkout Source | 检出源码"
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: "📦 Install Dependencies | 安装依赖"
+        uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
+          packages: git zip build-essential xz-utils bison flex libz-dev libssl-dev libelf-dev bc cpio python3 pahole lld llvm ccache
+          execute_install_scripts: true
+
+      - name: "🔐 Configure Git | 配置 Git"
         run: |
-          echo "工作目录: $GITHUB_WORKSPACE"
-          echo "正在配置Git用户信息..."
           git config --global user.name "build"
           git config --global user.email "3379524839@qq.com"
-          echo "Git配置完成"
-      - name: "安装依赖"
-        uses: awalsh128/cache-apt-pkgs-action@latest 
-        with: 
-          packages: git zip build-essential xz-utils bison flex libz-dev libssl-dev libelf-dev bc cpio python3 pahole lld llvm
-          execute_install_scripts: true
-      - name: "检出代码"
-        uses: actions/checkout@v6
-      - name: "开始编译"
+
+      - name: "🔎 Verify Source Layout | 检查源码布局"
+        shell: bash
         run: |
-          bash $GITHUB_WORKSPACE/common/actions_build.sh
-      - name: "上传Anykernel3"
+          set -euo pipefail
+          test -d "$GITHUB_WORKSPACE/common"
+          test -x "$GITHUB_WORKSPACE/prebuilts/clang/host/linux-x86/clang-r450784e/bin/clang"
+          test -f "$GITHUB_WORKSPACE/common/arch/arm64/configs/kalama_gki_defconfig"
+          echo "✅ SM-X710 kernel source layout OK"
+
+      - name: "🔨 Build Kernel | 编译内核"
+        shell: bash
+        run: |
+          chmod +x "$GITHUB_WORKSPACE/scripts/build_sm_x710.sh"
+          "$GITHUB_WORKSPACE/scripts/build_sm_x710.sh"
+
+      - name: "✅ Verify Kernel | 验证内核"
+        shell: bash
+        run: |
+          set -euo pipefail
+          IMAGE="$GITHUB_WORKSPACE/common/out/arch/arm64/boot/Image"
+          CONFIG="$GITHUB_WORKSPACE/common/out/.config"
+
+          test -s "$IMAGE"
+          test -f "$CONFIG"
+
+          for key in \
+            CONFIG_SYSVIPC \
+            CONFIG_POSIX_MQUEUE \
+            CONFIG_NAMESPACES \
+            CONFIG_PID_NS \
+            CONFIG_UTS_NS \
+            CONFIG_IPC_NS \
+            CONFIG_USER_NS \
+            CONFIG_NET_NS \
+            CONFIG_SECCOMP \
+            CONFIG_SECCOMP_FILTER \
+            CONFIG_CGROUPS \
+            CONFIG_DEVTMPFS \
+            CONFIG_OVERLAY_FS \
+            CONFIG_VETH \
+            CONFIG_BRIDGE; do
+              if ! grep -q "^${key}=y$" "$CONFIG"; then
+                echo "::error::${key} is not enabled"
+                exit 1
+              fi
+              echo "✅ ${key}=y"
+          done
+
+          echo "Kernel image: $(du -h "$IMAGE" | cut -f1)"
+
+      - name: "📤 Upload AnyKernel3 | 上传刷机包"
         uses: actions/upload-artifact@v7
         with:
-          name: 5.15.153-android13-8-2370170-abX710ZCU5CYH4
-          path: $GITHUB_WORKSPACE/samsung_galaxytabs9_kernelbuild/common/out/AnyKernel3/*.zip
-        
+          name: GalaxyTabS9_SM-X710_${{ inputs.build_number }}_${{ inputs.lto }}LTO
+          path: |
+            common/out/AnyKernel3/*.zip
+            common/out/arch/arm64/boot/Image
+            common/out/.config
+          if-no-files-found: error
+          compression-level: 6
