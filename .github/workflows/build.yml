@@ -54,15 +54,33 @@ jobs:
           remove-haskell: 'true'
           remove-codeql: 'true'
 
+      - name: "📦 Install Git LFS | 安装 Git LFS"
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y git-lfs
+          git lfs install --skip-repo
+          git lfs version
+
       - name: "📥 Checkout Source | 检出源码"
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
+          lfs: true
+
+      - name: "📥 Pull LFS Toolchain | 下载 LFS 工具链"
+        shell: bash
+        run: |
+          set -euo pipefail
+          git lfs install
+          git lfs pull
+          git lfs checkout
 
       - name: "📦 Install Dependencies | 安装依赖"
         uses: awalsh128/cache-apt-pkgs-action@latest
         with:
-          packages: git zip build-essential xz-utils bison flex libz-dev libssl-dev libelf-dev bc cpio python3 pahole lld llvm ccache
+          packages: git git-lfs zip build-essential xz-utils bison flex libz-dev libssl-dev libelf-dev bc cpio python3 pahole lld llvm ccache
           execute_install_scripts: true
 
       - name: "🔐 Configure Git | 配置 Git"
@@ -70,14 +88,43 @@ jobs:
           git config --global user.name "build"
           git config --global user.email "3379524839@qq.com"
 
-      - name: "🔎 Verify Source Layout | 检查源码布局"
+      - name: "🔎 Verify Toolchain & Source | 检查工具链与源码"
         shell: bash
         run: |
           set -euo pipefail
+
+          CLANG="$GITHUB_WORKSPACE/prebuilts/clang/host/linux-x86/clang-r450784e/bin/clang"
+          PAHOLE="$GITHUB_WORKSPACE/prebuilts/kernel-build-tools/linux-x86/bin/pahole"
+          DEFCONFIG="$GITHUB_WORKSPACE/common/arch/arm64/configs/kalama_gki_defconfig"
+
           test -d "$GITHUB_WORKSPACE/common"
-          test -x "$GITHUB_WORKSPACE/prebuilts/clang/host/linux-x86/clang-r450784e/bin/clang"
-          test -f "$GITHUB_WORKSPACE/common/arch/arm64/configs/kalama_gki_defconfig"
-          echo "✅ SM-X710 kernel source layout OK"
+          test -f "$CLANG"
+          test -f "$PAHOLE"
+          test -f "$DEFCONFIG"
+
+          if head -n 1 "$CLANG" | grep -q "git-lfs"; then
+            echo "::error::clang 仍然是 Git LFS pointer，LFS 文件未正确下载"
+            exit 1
+          fi
+
+          if head -n 1 "$PAHOLE" | grep -q "git-lfs"; then
+            echo "::error::pahole 仍然是 Git LFS pointer，LFS 文件未正确下载"
+            exit 1
+          fi
+
+          chmod +x "$CLANG" "$PAHOLE"
+
+          echo "========== clang =========="
+          "$CLANG" --version
+
+          echo "========== pahole =========="
+          "$PAHOLE" --version
+
+          echo "========== file info =========="
+          file "$CLANG"
+          file "$PAHOLE"
+
+          echo "✅ SM-X710 kernel source and prebuilt toolchain OK"
 
       - name: "🔨 Build Kernel | 编译内核"
         shell: bash
