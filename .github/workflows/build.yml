@@ -1,40 +1,213 @@
-name: build kernel
-on: workflow_dispatch
-jobs: 
-  build: 
-    name: build kernel
+name: Build Galaxy Tab S9 SM-X710 Kernel
+
+on:
+  workflow_dispatch:
+    inputs:
+      lto:
+        description: "LTO 模式（不会写入内核版本字符串）"
+        required: true
+        type: choice
+        options:
+          - thin
+          - full
+        default: thin
+      jobs:
+        description: "并行编译线程数（GitHub Runner 建议 2）"
+        required: true
+        type: choice
+        options:
+          - '2'
+          - '3'
+          - '4'
+        default: '2'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: SM-X710 / X710ZCU5CYH4 / Linux 5.15.153
     runs-on: ubuntu-latest
-    steps: 
-      - name: "最大化构建空间"
+    timeout-minutes: 180
+
+    env:
+      TARGET_DEFCONFIG: kalama_gki_defconfig
+      LTO: ${{ inputs.lto }}
+      JOBS: ${{ inputs.jobs }}
+
+      # Stock Galaxy Tab S9 Wi-Fi SM-X710 kernel identity.
+      # Keep these values pinned so Samsung Settings sees exactly the same
+      # release and build time as firmware X710ZCU5CYH4.
+      BUILD_NUMBER: X710ZCU5CYH4
+      GOOGLE_BRANCH: android13-5.15
+      KMI_GENERATION: '8'
+      STOCK_LOCALVERSION: '-2370170'
+      KBUILD_BUILD_VERSION: '1'
+      KBUILD_BUILD_TIMESTAMP: 'Wed Aug 20 08:06:12 UTC 2025'
+
+    steps:
+      - name: "🚀 Maximize Build Space | 最大化构建空间"
         uses: easimon/maximize-build-space@master
-        with: 
+        with:
           root-reserve-mb: 8192
           temp-reserve-mb: 4096
-          swap-size-mb: 20480
+          swap-size-mb: 12288
           remove-dotnet: 'true'
           remove-android: 'true'
           remove-haskell: 'true'
           remove-codeql: 'true'
-      - name: "配置git账户"
+
+      - name: "📦 Install Git LFS | 安装 Git LFS"
+        shell: bash
         run: |
-          echo "工作目录: $GITHUB_WORKSPACE"
-          echo "正在配置Git用户信息..."
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y git-lfs
+          git lfs install --skip-repo
+          git lfs version
+
+      - name: "📥 Checkout Source | 检出源码"
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          lfs: true
+
+      - name: "📥 Pull LFS Toolchain | 下载 LFS 工具链"
+        shell: bash
+        run: |
+          set -euo pipefail
+          git lfs install
+          git lfs pull
+          git lfs checkout
+
+      - name: "📦 Install Dependencies | 安装依赖"
+        uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
+          packages: git git-lfs zip build-essential xz-utils bison flex libz-dev libssl-dev libelf-dev bc cpio python3 pahole lld llvm ccache
+          execute_install_scripts: true
+
+      - name: "🔐 Configure Git | 配置 Git"
+        run: |
           git config --global user.name "build"
           git config --global user.email "3379524839@qq.com"
-          echo "Git配置完成"
-      - name: "安装依赖"
-        uses: awalsh128/cache-apt-pkgs-action@latest 
-        with: 
-          packages: git zip build-essential xz-utils bison flex libz-dev libssl-dev libelf-dev bc cpio python3 pahole lld llvm
-          execute_install_scripts: true
-      - name: "检出代码"
-        uses: actions/checkout@v6
-      - name: "开始编译"
+
+      - name: "🔎 Verify Toolchain & Source | 检查工具链与源码"
+        shell: bash
         run: |
-          bash $GITHUB_WORKSPACE/common/actions_build.sh
-      - name: "上传Anykernel3"
+          set -euo pipefail
+
+          CLANG="$GITHUB_WORKSPACE/prebuilts/clang/host/linux-x86/clang-r450784e/bin/clang"
+          PAHOLE="$GITHUB_WORKSPACE/prebuilts/kernel-build-tools/linux-x86/bin/pahole"
+          DEFCONFIG="$GITHUB_WORKSPACE/common/arch/arm64/configs/kalama_gki_defconfig"
+
+          test -d "$GITHUB_WORKSPACE/common"
+          test -f "$CLANG"
+          test -f "$PAHOLE"
+          test -f "$DEFCONFIG"
+
+          if head -n 1 "$CLANG" | grep -q "git-lfs"; then
+            echo "::error::clang 仍然是 Git LFS pointer，LFS 文件未正确下载"
+            exit 1
+          fi
+
+          if head -n 1 "$PAHOLE" | grep -q "git-lfs"; then
+            echo "::error::pahole 仍然是 Git LFS pointer，LFS 文件未正确下载"
+            exit 1
+          fi
+
+          chmod +x "$CLANG" "$PAHOLE"
+
+          echo "========== clang =========="
+          "$CLANG" --version
+
+          echo "========== pahole =========="
+          "$PAHOLE" --version
+
+          echo "========== file info =========="
+          file "$CLANG"
+          file "$PAHOLE"
+
+          echo "✅ SM-X710 kernel source and prebuilt toolchain OK"
+
+      - name: "🔨 Build Kernel | 编译内核"
+        shell: bash
+        run: |
+          chmod +x "$GITHUB_WORKSPACE/scripts/build_sm_x710.sh"
+          "$GITHUB_WORKSPACE/scripts/build_sm_x710.sh"
+
+      - name: "✅ Verify Kernel Identity | 验证原厂内核标识"
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          IMAGE="$GITHUB_WORKSPACE/common/out/arch/arm64/boot/Image"
+          CONFIG="$GITHUB_WORKSPACE/common/out/.config"
+          RELEASE_FILE="$GITHUB_WORKSPACE/common/out/include/config/kernel.release"
+          COMPILE_H="$GITHUB_WORKSPACE/common/out/include/generated/compile.h"
+          IDENTITY_FILE="$GITHUB_WORKSPACE/common/out/build_identity.txt"
+
+          test -s "$IMAGE"
+          test -f "$CONFIG"
+          test -f "$RELEASE_FILE"
+          test -f "$COMPILE_H"
+          test -f "$IDENTITY_FILE"
+
+          EXPECTED_RELEASE="5.15.153-android13-8-2370170-abX710ZCU5CYH4"
+          EXPECTED_UTS="#1 SMP PREEMPT Wed Aug 20 08:06:12 UTC 2025"
+          ACTUAL_RELEASE="$(cat "$RELEASE_FILE")"
+          ACTUAL_UTS="$(sed -n 's/^#define UTS_VERSION "\(.*\)"$/\1/p' "$COMPILE_H")"
+
+          echo "Expected kernel.release: $EXPECTED_RELEASE"
+          echo "Actual   kernel.release: $ACTUAL_RELEASE"
+          echo "Expected UTS_VERSION:    $EXPECTED_UTS"
+          echo "Actual   UTS_VERSION:    $ACTUAL_UTS"
+
+          if [ "$ACTUAL_RELEASE" != "$EXPECTED_RELEASE" ]; then
+            echo "::error::内核版本字符串与 SM-X710 原厂内核不一致"
+            exit 1
+          fi
+
+          if [ "$ACTUAL_UTS" != "$EXPECTED_UTS" ]; then
+            echo "::error::内核编译编号/时间与 SM-X710 原厂内核不一致"
+            exit 1
+          fi
+
+          for key in \
+            CONFIG_SYSVIPC \
+            CONFIG_POSIX_MQUEUE \
+            CONFIG_NAMESPACES \
+            CONFIG_PID_NS \
+            CONFIG_UTS_NS \
+            CONFIG_IPC_NS \
+            CONFIG_USER_NS \
+            CONFIG_NET_NS \
+            CONFIG_SECCOMP \
+            CONFIG_SECCOMP_FILTER \
+            CONFIG_CGROUPS \
+            CONFIG_DEVTMPFS \
+            CONFIG_OVERLAY_FS \
+            CONFIG_VETH \
+            CONFIG_BRIDGE; do
+              if ! grep -q "^${key}=y$" "$CONFIG"; then
+                echo "::error::${key} is not enabled"
+                exit 1
+              fi
+              echo "✅ ${key}=y"
+          done
+
+          echo "Kernel image: $(du -h "$IMAGE" | cut -f1)"
+          echo "========== build_identity.txt =========="
+          cat "$IDENTITY_FILE"
+          echo "✅ 原厂内核版本字符串和时间验证通过"
+
+      - name: "📤 Upload AnyKernel3 | 上传刷机包"
         uses: actions/upload-artifact@v7
         with:
-          name: 5.15.153-android13-8-2370170-abX710ZCU5CYH4
-          path: $GITHUB_WORKSPACE/samsung_galaxytabs9_kernelbuild/common/out/AnyKernel3/*.zip
-        
+          name: GalaxyTabS9_SM-X710_X710ZCU5CYH4_${{ inputs.lto }}LTO
+          path: |
+            common/out/AnyKernel3/*.zip
+            common/out/arch/arm64/boot/Image
+            common/out/.config
+            common/out/build_identity.txt
+          if-no-files-found: error
+          compression-level: 6
