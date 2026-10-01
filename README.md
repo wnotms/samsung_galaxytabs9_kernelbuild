@@ -51,3 +51,11 @@ Actions 构建脚本会再次显式启用这些配置，并在编译后检查关
 ## 注意
 
 这是自定义内核构建项目。刷写前请确保已经备份原始 boot/init_boot/vendor_boot 以及重要数据，并确认刷机包与当前 SM-X710 固件兼容。
+
+## License
+
+本仓库中由本项目原创的构建脚本、GitHub Actions 工作流及其他项目专用文件，除非文件中另有声明，采用 **GNU General Public License v2.0 only (GPL-2.0-only)** 授权，详见根目录 `LICENSE`。
+
+Linux 内核源码及其衍生内容保留原有许可证。请参阅 `common/COPYING`、`common/LICENSES/` 以及各源文件中的 SPDX 标识。
+
+`prebuilts/`、工具链、固件及其他第三方组件不因根目录许可证而重新授权，继续遵循各自上游或权利人的许可证条款。
